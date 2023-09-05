@@ -1,6 +1,7 @@
 import multiprocessing
 import asyncio
-
+import re
+from requests.auth import HTTPBasicAuth
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
@@ -35,7 +36,7 @@ from sweepai.config.server import (
     BOT_TOKEN_NAME,
 )
 from sweepai.utils.event_logger import posthog
-from sweepai.utils.github_utils import ClonedRepo, get_github_client
+from sweepai.utils.github_utils import ClonedRepo, get_github_client, get_installation_id, get_installation_id_by_organization
 from sweepai.utils.redis_client import RedisClient
 from sweepai.utils.search_utils import index_full_repository
 
@@ -219,7 +220,10 @@ def home():
 async def webhook(raw_request: Request):
     """Handle a webhook request from GitHub."""
     try:
+        import pprint
+        pp = pprint.PrettyPrinter(indent=2)
         request_dict = await raw_request.json()
+        pp.pprint(request_dict)
         print(issues_lock)
         logger.info(f"Received request: {request_dict.keys()}")
         event = raw_request.headers.get("X-GitHub-Event")
@@ -683,8 +687,67 @@ async def webhook(raw_request: Request):
         logger.warning(f"Failed to parse request: {e}")
         raise HTTPException(status_code=422, detail="Failed to parse request")
     return {"success": True}
+# PYTHONPATH=/app uvicorn sweepai.api:app --host 0.0.0.0 --port 8080 --workers 2
 
+@app.post("/jira")
+async def jira_webhook(raw_request: Request):
+    logger.log("INFO", "Received JIRA webhook")
+    request_dict = await raw_request.json()
+    import pprint
+    pp = pprint.PrettyPrinter(indent=2)
 
+    title = request_dict['issue']['fields']['summary']
+    description = request_dict['issue']['fields']['description']
+    jira_key = request_dict['issue']['key']
+    jira_url = request_dict['issue']['self'].split('/rest')[0]
+    jira_url_issue = f"{jira_url}/browse/{jira_key}"
+    jira_put_url = f"{jira_url}/rest/api/3/issue/{jira_key}"
+    pp.pprint(raw_request.query_params)
+    jira_basic_auth = raw_request.query_params['basicAuthentication']
+
+    print(jira_url_issue)
+    
+    if title.lower().startswith("sweep") or "sweep:" in title.lower():
+        
+        pp.pprint(description)
+        import re
+        pattern = r'https://github\.com/([A-Za-z0-9_-]+)|git@github\.com:([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)'
+        matches = re.findall(pattern, description)
+
+        for match in matches:
+            user, repo = match
+            if user:
+                github_username = user
+            if repo:
+                repository_name = repo
+
+        print("GitHub username:", github_username)
+        print("Repository name:", repository_name)
+        organization_name = repository_name.split("/")[0]
+        if github_username == organization_name:
+            github_installation_id = get_installation_id(github_username)
+        else:
+            github_installation_id = get_installation_id_by_organization(organization_name)
+
+        _, g = get_github_client(github_installation_id)
+        repo = g.get_repo(repository_name)
+        result = repo.create_issue(title=title, body=description+ f"\n\nJira issue: {jira_url_issue}")
+        #html_url
+        pp.pprint(result)
+        print(result['issue']['html_url'])
+        
+        # Update JIRA issue with GitHub issue URL
+        # with basic auth
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        auth = HTTPBasicAuth(jira_basic_auth.split(":")[0], jira_basic_auth.split(":")[1])
+        print(auth)
+        result = requests.put(jira_put_url, auth=auth, headers=headers, json={"fields": {"description": description + f"\n\nJira issue: {jira_url_issue}" + f"\n\nGitHub issue: {result['issue']['html_url']}"}})
+        pp.pprint(result)
+
+    
 # Set up cronjob for this
 @app.get("/update_sweep_prs")
 def update_sweep_prs(repo_full_name: str, installation_id: int):

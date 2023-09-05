@@ -75,6 +75,10 @@ def get_github_client(installation_id: int):
 
 def get_installation_id(username: str):
     jwt = get_jwt()
+    logger.info(f"Getting installation id for {username}")
+    logger.info(f"https://api.github.com/users/{username}/installation")
+    logger.info(f"Bearer " + jwt)
+    
     response = requests.get(
         f"https://api.github.com/users/{username}/installation",
         headers={
@@ -84,6 +88,31 @@ def get_installation_id(username: str):
         },
     )
     obj = response.json()
+    import pprint
+    pp = pprint.PrettyPrinter(indent=4)
+    pp.pprint(obj)
+    try:
+        return obj["id"]
+    except:
+        raise Exception("Could not get installation id, probably not installed")
+
+def get_installation_id_by_organization(organization: str):
+    logger.info(f"Getting installation id for {organization}")
+    jwt = get_jwt()
+ 
+    response = requests.get(
+        f"https://api.github.com/orgs/{organization}/installation",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + jwt,
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    print(f"https://api.github.com/orgs/{organization}/installation")
+    obj = response.json()
+    import pprint
+    pp = pprint.PrettyPrinter(indent=4)
+    pp.pprint(obj)
     try:
         return obj["id"]
     except:
@@ -430,3 +459,39 @@ def get_file_names_from_query(query: str) -> list[str]:
 #         ctags=ctags,
 #     )
 #     return tree
+
+def post_issue(repository_full_name: str, title: str, body: str) -> str:
+    """
+    Create a GitHub issue in a project
+
+    Args:
+        repository_full_name (str): _description_
+        title (str): _description_
+        body (str): _description_
+
+    Returns:
+        str: _description_
+    """
+    logger.info(f"Posting issue to {repository_full_name}")
+    jwt = get_jwt()
+    print(jwt)
+    response = requests.post(
+        f"https://api.github.com/repos/{repository_full_name}/issues",
+        
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + jwt,
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        data = {
+            "title": title,
+            "body": body
+        }
+        
+        
+    )
+    obj = response.json()
+    import pprint
+    pp = pprint.PrettyPrinter(indent=4)
+    pp.pprint(obj)
+    return obj['url']
